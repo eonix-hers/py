@@ -8,17 +8,17 @@ import time
 from collections import defaultdict
 from urllib.parse import unquote
 from itertools import count
-from playwright.async_api import async_playwright
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, ContextTypes, ConversationHandler, MessageHandler, filters
 from telegram.constants import ChatAction
 from dotenv import load_dotenv
+from playwright.async_api import async_playwright
 
 # Load environment variables
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8181473152:AAEZozyKa7fZ4Q0C6DPv-TFaA1z6ebgO4O8")
-OWNER_ID = os.getenv("OWNER_ID", "1998443651")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
+OWNER_ID = os.getenv("OWNER_ID", "❤❤❤❤❤❤❤❤❤❤")
 APPROVED_USERS_FILE = "approved_users.txt"
 running_tasks = defaultdict(list)
 
@@ -55,90 +55,166 @@ success_count = 0
 fail_count = 0
 lock = asyncio.Lock()
 
+# Conversation states for /run
+STATE_USERNAME, STATE_PASSWORD, STATE_URL, STATE_PREFIX, STATE_TASKS = range(5)
+
 async def is_user_approved(user_id):
     return str(user_id) in APPROVED_USERS
 
 async def get_session_id(username, password):
     url = 'https://www.instagram.com/api/v1/web/accounts/login/ajax/'
-    headers = {'user-agent': 'Mozilla/5.0'}
+    headers = {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+        'x-csrftoken': 'missing',
+        'referer': 'https://www.instagram.com/'
+    }
     timestamp = str(int(time.time()))
-    data = {'username': username, 'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{timestamp}:{password}'}
-    response = requests.post(url, headers=headers, data=data)
-    if "sessionid" in response.cookies:
-        return response.cookies.get("sessionid")
-    raise Exception("Login failed.")
+    data = {
+        'username': username,
+        'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{timestamp}:{password}'
+    }
+    try:
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200 and "sessionid" in response.cookies:
+            return response.cookies.get("sessionid")
+        else:
+            raise Exception(f"Login failed: {response.status_code} - {response.text[:100]}")
+    except requests.RequestException as e:
+        raise Exception(f"Network error: {str(e)}")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not await is_user_approved(update.effective_user.id):
         await context.bot.send_message(update.effective_chat.id, "Access denied.")
         return
-    await context.bot.send_message(update.effective_chat.id, "Welcome! Use /run to start.")
+    await context.bot.send_message(update.effective_chat.id, "Welcome! Use /run to start the process or /help for a list of commands.")
+    return ConversationHandler.END
 
-async def approve_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != OWNER_ID:
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_user_approved(update.effective_user.id):
         await context.bot.send_message(update.effective_chat.id, "Access denied.")
         return
-    if len(context.args) != 1:
-        await context.bot.send_message(update.effective_chat.id, "Usage: /approve <user_id>")
-        return
-    new_user_id = context.args[0]
-    APPROVED_USERS.add(new_user_id)
-    with open(APPROVED_USERS_FILE, "a") as f:
-        f.write(new_user_id + "\n")
-    await context.bot.send_message(update.effective_chat.id, f"User {new_user_id} approved.")
+    help_message = """
+Available commands and examples:
 
-async def ban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != OWNER_ID:
+- /start: Sends a welcome message and instructions. Example: Send /start to begin.
+
+- /run: Starts the step-by-step process to enter Instagram details and begin renaming groups. Example: Send /run, then follow prompts: enter username (e.g., @infame_eonix), password (e.g., eonix_password as a placeholder), URLs, prefix, and tasks.
+
+- /help: Displays this list of commands and their descriptions. Example: Send /help to see this message.
+
+- /approve <user_id>: Adds a user to the approved list (owner only). Example: Send /approve 123456789 to approve a user.
+
+- /ban <user_id>: Permanently bans a user from using the bot (owner only). Example: Send /ban 123456789 to ban a user.
+
+- /listusers: Lists all approved users (owner only). Example: Send /listusers to see the list.
+
+- /tban <user_id> [duration]: Temporarily bans a user for a specified number of minutes (owner only). Example: Send /tban 123456789 60 to ban a user for 60 minutes.
+
+- /stop: Stops all running processes for your session. Example: Send /stop during a /run process to cancel it.
+
+Remember, examples like 'eonix_password' are placeholders. Always use your own secure password.
+    """
+    await context.bot.send_message(update.effective_chat.id, help_message)
+
+async def run_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_user_approved(update.effective_user.id):
         await context.bot.send_message(update.effective_chat.id, "Access denied.")
-        return
-    if len(context.args) != 1:
-        await context.bot.send_message(update.effective_chat.id, "Usage: /ban <user_id>")
-        return
-    user_id_to_ban = context.args[0]
-    if user_id_to_ban in APPROVED_USERS:
-        APPROVED_USERS.remove(user_id_to_ban)
-        with open(APPROVED_USERS_FILE, "w") as f:
-            f.write("\n".join(APPROVED_USERS))
-        await context.bot.send_message(update.effective_chat.id, f"User {user_id_to_ban} banned.")
+        return ConversationHandler.END
+    await context.bot.send_message(update.effective_chat.id, "Please enter your Instagram username:")
+    return STATE_USERNAME
+
+async def get_username(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['username'] = update.message.text
+    await context.bot.send_message(update.effective_chat.id, "Please enter your Instagram password:")
+    return STATE_PASSWORD
+
+async def get_password(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['password'] = update.message.text
+    username = context.user_data['username']
+    password = context.user_data['password']
+    try:
+        session_id = await get_session_id(username, password)
+        context.user_data['session_id'] = session_id
+        await context.bot.send_message(update.effective_chat.id, "Logged in successfully!")
+        await context.bot.send_message(update.effective_chat.id, "Please enter the group URLs (comma-separated):")
+        return STATE_URL
+    except Exception as e:
+        await context.bot.send_message(update.effective_chat.id, f"Login failed: {str(e)}. Please start over with /run.")
+        return ConversationHandler.END
+
+async def get_urls(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['group_urls'] = [url.strip() for url in update.message.text.split(',')]
+    await context.bot.send_message(update.effective_chat.id, "Please enter the prefix:")
+    return STATE_PREFIX
+
+async def get_prefix(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['user_prefix'] = update.message.text
+    await context.bot.send_message(update.effective_chat.id, "Please enter the number of tasks:")
+    return STATE_TASKS
+
+async def get_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    context.user_data['task_count'] = int(update.message.text)
+    session_id = context.user_data['session_id']
+    group_urls = context.user_data['group_urls']
+    user_prefix = context.user_data['user_prefix']
+    task_count = context.user_data['task_count']
+    delay = 0.05  # Fixed delay
+    try:
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(headless=True)
+            context_playwright = await browser.new_context()
+            tasks = []
+            for url in group_urls:
+                loop_tasks = [asyncio.create_task(rename_loop(context_playwright, url, session_id, user_prefix, task_count, delay)) for _ in range(task_count)]
+                tasks.extend(loop_tasks)
+            stats_task = asyncio.create_task(live_stats(update, context))
+            tasks.append(stats_task)
+            running_tasks[update.effective_chat.id] = tasks
+            try:
+                await asyncio.gather(*tasks)
+            except asyncio.CancelledError:
+                await context.bot.send_message(update.effective_chat.id, "Processes stopped.")
+        return ConversationHandler.END
+    except Exception as e:
+        await context.bot.send_message(update.effective_chat.id, f"Error starting process: {str(e)}")
+        return ConversationHandler.END
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await is_user_approved(update.effective_user.id):
+        await context.bot.send_message(update.effective_chat.id, "Access denied.")
+        return ConversationHandler.END
+    chat_id = update.effective_chat.id
+    if chat_id in running_tasks and running_tasks[chat_id]:
+        for task in running_tasks[chat_id]:
+            task.cancel()
+        running_tasks[chat_id] = []
+        await context.bot.send_message(update.effective_chat.id, "All running processes have been stopped.")
     else:
-        await context.bot.send_message(update.effective_chat.id, f"User {user_id_to_ban} not found in approved list.")
+        await context.bot.send_message(update.effective_chat.id, "No running processes to stop.")
+    return ConversationHandler.END
 
-async def listusers(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != OWNER_ID:
-        await context.bot.send_message(update.effective_chat.id, "Access denied.")
-        return
-    if APPROVED_USERS:
-        user_list = ", ".join(APPROVED_USERS)
-        await context.bot.send_message(update.effective_chat.id, f"Approved users: {user_list}")
-    else:
-        await context.bot.send_message(update.effective_chat.id, "No approved users.")
+async def get_session_id(username, password):
+    url = 'https://www.instagram.com/api/v1/web/accounts/login/ajax/'
+    headers = {
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/58.0.3029.110 Safari/537.3',
+        'x-csrftoken': 'missing',
+        'referer': 'https://www.instagram.com/'
+    }
+    timestamp = str(int(time.time()))
+    data = {
+        'username': username,
+        'enc_password': f'#PWD_INSTAGRAM_BROWSER:0:{timestamp}:{password}'
+    }
+    try:
+        response = requests.post(url, headers=headers, data=data)
+        if response.status_code == 200 and "sessionid" in response.cookies:
+            return response.cookies.get("sessionid")
+        else:
+            raise Exception(f"Login failed: {response.status_code} - {response.text[:100]}")
+    except requests.RequestException as e:
+        raise Exception(f"Network error: {str(e)}")
 
-async def tban_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if str(update.effective_user.id) != OWNER_ID:
-        await context.bot.send_message(update.effective_chat.id, "Access denied.")
-        return
-    if len(context.args) < 1:
-        await context.bot.send_message(update.effective_chat.id, "Usage: /tban <user_id> [duration_in_minutes]")
-        return
-    user_id_to_tban = context.args[0]
-    duration = int(context.args[1]) if len(context.args) > 1 else 60
-    if user_id_to_tban in APPROVED_USERS:
-        APPROVED_USERS.remove(user_id_to_tban)
-        with open(APPROVED_USERS_FILE, "w") as f:
-            f.write("\n".join(APPROVED_USERS))
-        await context.bot.send_message(update.effective_chat.id, f"User {user_id_to_tban} temporarily banned for {duration} minutes.")
-        asyncio.create_task(restore_user_after_delay(user_id_to_tban, duration))
-    else:
-        await context.bot.send_message(update.effective_chat.id, f"User {user_id_to_tban} not found in approved list.")
-
-async def restore_user_after_delay(user_id, duration_minutes):
-    await asyncio.sleep(duration_minutes * 60)
-    if user_id not in APPROVED_USERS:
-        APPROVED_USERS.add(user_id)
-        with open(APPROVED_USERS_FILE, "a") as f:
-            f.write(user_id + "\n")
-
-async def rename_loop(context, dm_url, session_id, user_prefix, task_count, delay=0.01):
+async def rename_loop(context, dm_url, session_id, user_prefix, task_count, delay=0.05):
     global success_count, fail_count
     page = await context.new_page()
     try:
@@ -160,7 +236,7 @@ async def rename_loop(context, dm_url, session_id, user_prefix, task_count, dela
             else:
                 async with lock:
                     fail_count += 1
-            await asyncio.sleep(max(delay, 0.01))
+            await asyncio.sleep(delay)
     except asyncio.CancelledError:
         logging.info("Task cancelled.")
     except Exception as e:
@@ -189,54 +265,25 @@ async def live_stats(update, context):
             )
         await asyncio.sleep(5)
 
-async def run(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_user_approved(update.effective_user.id):
-        await context.bot.send_message(update.effective_chat.id, "Access denied.")
-        return
-    if len(context.args) < 5 or len(context.args) > 6:
-        await context.bot.send_message(update.effective_chat.id, "Usage: /run <username> <password> <group_urls> <prefix> <tasks> [delay_in_seconds]")
-        return
-    username, password, group_urls_str, user_prefix, tasks_str = context.args[:5]
-    delay = float(context.args[5]) if len(context.args) > 5 else 0.01
-    task_count = int(tasks_str)
-    group_urls = [url.strip() for url in group_urls_str.split(',')]
-    try:
-        session_id = await get_session_id(username, password)
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context_playwright = await browser.new_context()
-            tasks = []
-            for url in group_urls:
-                loop_tasks = [asyncio.create_task(rename_loop(context_playwright, url, session_id, user_prefix, task_count, delay)) for _ in range(task_count)]
-                tasks.extend(loop_tasks)
-            stats_task = asyncio.create_task(live_stats(update, context))
-            tasks.append(stats_task)
-            running_tasks[update.effective_chat.id] = tasks
-            try:
-                await asyncio.gather(*tasks)
-            except asyncio.CancelledError:
-                await context.bot.send_message(update.effective_chat.id, "Processes stopped.")
-    except Exception as e:
-        await context.bot.send_message(update.effective_chat.id, f"Error: {e}")
-
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not await is_user_approved(update.effective_user.id):
-        await context.bot.send_message(update.effective_chat.id, "Access denied.")
-        return
-    chat_id = update.effective_chat.id
-    if chat_id in running_tasks and running_tasks[chat_id]:
-        for task in running_tasks[chat_id]:
-            task.cancel()
-        running_tasks[chat_id] = []
-        await context.bot.send_message(update.effective_chat.id, "All running processes have been stopped.")
-    else:
-        await context.bot.send_message(update.effective_chat.id, "No running processes to stop.")
-
 if __name__ == '__main__':
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    conv_handler = ConversationHandler(
+        entry_points=[CommandHandler('run', run_start)],
+        states={
+            STATE_USERNAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_username)],
+            STATE_PASSWORD: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_password)],
+            STATE_URL: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_urls)],
+            STATE_PREFIX: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_prefix)],
+            STATE_TASKS: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_tasks)],
+        },
+        fallbacks=[CommandHandler('stop', stop)],
+    )
+    
+    application.add_handler(conv_handler)
     application.add_handler(CommandHandler('start', start))
+    application.add_handler(CommandHandler('help', help_command))
     application.add_handler(CommandHandler('approve', approve_user))
-    application.add_handler(CommandHandler('run', run))
     application.add_handler(CommandHandler('ban', ban_user))
     application.add_handler(CommandHandler('listusers', listusers))
     application.add_handler(CommandHandler('tban', tban_user))
