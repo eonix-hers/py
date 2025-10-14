@@ -16,8 +16,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-OWNER_ID = os.getenv("OWNER_ID", "❤❤❤❤❤❤❤❤❤❤")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8126901005:AAHx_dX78rWDjdLOntZjsvi3EMN-dJjy5q0")
+OWNER_ID = os.getenv("OWNER_ID", "1998443651")
 APPROVED_USERS_FILE = "approved_users.txt"
 running_tasks = defaultdict(list)
 
@@ -47,7 +47,7 @@ ufo_bases = [
     "  ⭞ ʀɴᴅ ￫", "  ⭞ ᴄᴜᴅᴀᴀ ￫", "  ⭞ ʀɴᴅɪᴄᴀ ￫", "  ⭞ ᴋᴜᴛɪʏᴀ ￫",
     "  ⭞ ᴄʜᴀᴍᴀʀ ￫", "  ⭞ ᴄᴠʀ ᴄʀʀ ￫", "  ⭞ ᴋᴀᴍᴢᴏʀ ￫"
 ]
-emoji_suffixes = ["⚡", "💋", "👅", "🖕", "🐷", "💩", "🔥"]
+emoji_suffixes = ["🍌", "🏳‍🌈", "👅", "🖕", "🐷", "💩", "🍆"]
 name_counter = count(1)
 used_names = defaultdict(set)  # Per chat or group, but keeping global for simplicity
 success_count = 0
