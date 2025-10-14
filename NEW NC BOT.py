@@ -17,8 +17,8 @@ from playwright.async_api import async_playwright
 # Load environment variables
 load_dotenv()
 
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "YOUR_TELEGRAM_BOT_TOKEN")
-OWNER_ID = os.getenv("OWNER_ID", "❤❤❤❤❤❤❤❤❤❤")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8181473152:AAEZozyKa7fZ4Q0C6DPv-TFaA1z6ebgO4O8")
+OWNER_ID = os.getenv("OWNER_ID", "1998443651")
 APPROVED_USERS_FILE = "approved_users.txt"
 running_tasks = defaultdict(list)
 
