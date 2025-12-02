@@ -124,7 +124,7 @@ def banner():
 
 password = input("Enter script password: ").strip()
 
-if password != "eonixpapa":
+if password != "levigotaerip":
 
     print(f"Incorrect password! contact Eonix on tg @infame_eonix .")
 
@@ -445,6 +445,7 @@ async def main():
 if __name__ == "__main__":
 
     asyncio.run(main())
+
 
 
 
